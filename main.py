@@ -1,35 +1,56 @@
 import os
+import logging
 import boto3
-# from botocore import NoCredentialsError
+from botocore.exceptions import ClientError
+from botocore.exceptions import NoCredentialsError
 from PIL import Image
 
 def compress_image(input_path, output_path):
     with Image.open(input_path) as img:
         img.save(output_path, quality=95, optimize=True)
-        
-def upload_to_s3(local_path, s3_bucket, s3_key):
-    s3 = boto3.client('s3')
-    print("++",s3)
-    s3.upload_file(local_path, s3_bucket, s3_key)
-    print(f'Uploaded {s3_key} to {s3_bucket}')
-    os.remove(local_path)
-    
-def traverse_directory(directory_path, s3_bucket):
-    for root, dirs, files in os.walk(directory_path):
+
+def upload_file(file_name, bucket, object_name=None):
+    """Upload a file to an S3 bucket
+
+    :param file_name: File to upload
+    :param bucket: Bucket to upload to
+    :param object_name: S3 object name. If not specified then file_name is used
+    :return: True if file was uploaded, else False
+    """
+
+    # If S3 object_name was not specified, use file_name
+    if object_name is None:
+        object_name = os.path.basename(file_name)
+
+    # Upload the file
+    s3_client = boto3.client('s3')
+    try:
+        response = s3_client.upload_file(file_name, bucket, object_name)
+    except ClientError as e:
+        logging.error(e)
+        return False
+    return True
+
+def traverse_directory(directory, s3_bucket):
+    for root, dirs, files in os.walk(directory):
         for file in files:
             if file.lower().endswith(('.jpg', '.jpeg', '.png')):
-                input_path = os.path.join(root,file)
-                output_path = f'temp_{file}'
+                input_path = os.path.join(root, file)
+                output_path = f'compressed_{file}'
+
                 compress_image(input_path, output_path)
-                s3_key = os.path.relpath(output_path,directory_path)
-                upload_to_s3(output_path, s3_bucket, s3_key)
-                
+                upload_file(output_path, s3_bucket, os.path.relpath(output_path))
+
+                # Clean up the compressed image
+                os.remove(output_path)
+
 if __name__ == '__main__':
-    aws_access_key = input('Enter AWS access key; ')
-    aws_secret_key = input('Enter AWS secret key; ')
-    s3_bucket = input('Enter target S3 bucket name: ')
-    directory_path = input('Enter the directory path: ')
-    
-    boto3.setup_default_session(aws_access_key_id=aws_access_key, aws_secret_access_key=aws_secret_key)
-    
-    traverse_directory(directory_path,s3_bucket)
+    aws_access_key_id = input('Enter AWS Access Key ID: ')
+    aws_secret_access_key = input('Enter AWS Secret Access Key: ')
+    s3_bucket = input('Enter target AWS S3 bucket name: ')
+    directory = input('Enter the directory path: ')
+
+    os.environ['AWS_ACCESS_KEY_ID'] = aws_access_key_id
+    os.environ['AWS_SECRET_ACCESS_KEY'] = aws_secret_access_key
+
+    traverse_directory(directory, s3_bucket)
